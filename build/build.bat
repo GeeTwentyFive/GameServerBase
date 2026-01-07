@@ -1,0 +1,1 @@
+g++ -O2 -std=c++23 ../main.cpp -lws2_32 -lwinmm -o HnSServer.exe

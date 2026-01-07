@@ -1,0 +1,187 @@
+#include <unordered_map>
+#include <iostream>
+#include <string>
+#include <experimental/scope>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <thread>
+
+#define ENET_IMPLEMENTATION
+#include "libs/enet.h"
+
+
+#define PORT 55555
+#define MAX_PLAYERS 8
+
+
+#pragma pack(1)
+typedef struct {
+	float x;
+	float y;
+	float z;
+} Vec3;
+
+#pragma pack(1)
+typedef struct {
+	Vec3 pos;
+	// ADD PLAYER STATE HERE
+} PlayerState;
+
+
+enum PacketType : char {
+	PLAYER_CONNECTED,
+	PLAYER_SYNC,
+	PLAYER_DISCONNECTED,
+
+	CONTROL_GAME_START,
+	CONTROL_GAME_END
+};
+
+// DEFINE PACKETS AND PACKET TYPES AROUND HERE ^ v
+
+#pragma region PACKETS
+
+#pragma pack(1)
+typedef struct {
+	PacketType packet_type = PacketType::PLAYER_CONNECTED;
+	enet_uint8 connected_player_id;
+} PlayerConnectedPacketData;
+
+#pragma pack(1)
+typedef struct {
+	PacketType packet_type = PacketType::PLAYER_SYNC;
+	enet_uint8 player_id;
+	PlayerState player_state;
+} PlayerSyncPacketData;
+
+#pragma pack(1)
+typedef struct {
+	PacketType packet_type = PacketType::PLAYER_DISCONNECTED;
+	enet_uint8 disconnected_player_id;
+} PlayerDisconnectedPacketData;
+
+#pragma pack(1)
+typedef struct {
+	PacketType packet_type = PacketType::CONTROL_GAME_START;
+} GameStartControlPacketData;
+
+#pragma pack(1)
+typedef struct {
+	PacketType packet_type = PacketType::CONTROL_GAME_END;
+} GameEndControlPacketData;
+
+#pragma endregion PACKETS
+
+
+ENetHost* server;
+
+std::unordered_map<enet_uint8, PlayerState> player_states;
+
+
+static inline void HandleReceive(
+	enet_uint8 player_id,
+	ENetPacket* packet
+) {
+	switch (*((PacketType*)(packet->data + 0))) {
+		case PacketType::PLAYER_SYNC:
+		{
+			enet_uint8 player_id = *((enet_uint8*)(
+				packet->data + offsetof(PlayerSyncPacketData, player_id)
+			));
+			player_states[player_id] = *((PlayerState*)(
+				packet->data + offsetof(PlayerSyncPacketData, player_state)
+			));
+
+			enet_host_broadcast(server, 0, packet);
+		}
+		break;
+
+		// HANDLE OTHER PACKET TYPES HERE
+
+		default: break;
+	}
+}
+
+
+int main(int argc, char* argv[]) {
+	if (!enet_initialize()) throw std::runtime_error("Failed to initialize ENet");
+	auto _cleanup0 = std::experimental::scope_exit(enet_deinitialize);
+
+	ENetAddress address = {0};
+	address.host = ENET_HOST_ANY;
+	address.port = PORT;
+	server = enet_host_create(&address, MAX_PLAYERS, 1, 0, 0);
+	if (server == nullptr) throw std::runtime_error("Failed to create ENet server");
+	auto _cleanup1 = std::experimental::scope_exit([](){enet_host_destroy(server);});
+
+	std::cout << "Server started on port " << PORT << std::endl;
+
+	#ifdef _WIN32
+	timeBeginPeriod(1);
+	auto _cleanup_windows = std::experimental::scope_exit([](){timeEndPeriod(1);});
+	#endif
+
+	ENetEvent event;
+	for (;;) {
+		while (enet_host_service(server, &event, 0) > 0) {
+			switch (event.type) {
+				case ENET_EVENT_TYPE_CONNECT:
+				{
+					std::cout
+					<< "Client "
+					<< event.peer->incomingPeerID
+					<< "connected"
+					<< std::endl;
+
+					PlayerConnectedPacketData pcp_data;
+					pcp_data.connected_player_id = event.peer->incomingPeerID;
+					ENetPacket* player_connected_packet = enet_packet_create(
+						&pcp_data,
+						sizeof(PlayerConnectedPacketData),
+						ENET_PACKET_FLAG_RELIABLE
+					);
+					enet_host_broadcast(server, 0, player_connected_packet);
+				}
+				break;
+
+				case ENET_EVENT_TYPE_RECEIVE:
+				{
+					HandleReceive(
+						event.peer->incomingPeerID,
+						event.packet
+					);
+				}
+				break;
+
+				case ENET_EVENT_TYPE_DISCONNECT:
+				case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
+				{
+					std::cout
+					<< "Client "
+					<< event.peer->incomingPeerID
+					<< "disconnected"
+					<< std::endl;
+
+					player_states.erase(event.peer->incomingPeerID);
+
+					PlayerDisconnectedPacketData pdp_data;
+					pdp_data.disconnected_player_id = event.peer->incomingPeerID;
+					ENetPacket* player_disconnected_packet = enet_packet_create(
+						&pdp_data,
+						sizeof(PlayerDisconnectedPacketData),
+						ENET_PACKET_FLAG_RELIABLE
+					);
+					enet_host_broadcast(server, 0, player_disconnected_packet);
+				}
+				break;
+
+				case ENET_EVENT_TYPE_NONE: break;
+			}
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+
+	return 0;
+}
