@@ -2,6 +2,7 @@
 #include <unordered_map>
 #include <iostream>
 #include <string>
+#include <algorithm>
 #include <thread>
 
 #define ENET_IMPLEMENTATION
