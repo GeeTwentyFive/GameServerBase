@@ -2,7 +2,6 @@
 #include <unordered_map>
 #include <iostream>
 #include <string>
-#include <experimental/scope>
 #include <thread>
 
 #define ENET_IMPLEMENTATION
@@ -185,21 +184,22 @@ static inline void HandleReceive(
 
 
 int main(int argc, char* argv[]) {
-	if (!enet_initialize()) throw std::runtime_error("Failed to initialize ENet");
-	auto _cleanup0 = std::experimental::scope_exit(enet_deinitialize);
+try {
+	if (enet_initialize() != 0) throw std::runtime_error("Failed to initialize ENet");
+	atexit(enet_deinitialize);
 
 	ENetAddress address = {0};
 	address.host = ENET_HOST_ANY;
 	address.port = PORT;
 	server = enet_host_create(&address, MAX_PLAYERS, 1, 0, 0);
 	if (server == nullptr) throw std::runtime_error("Failed to create ENet server");
-	auto _cleanup1 = std::experimental::scope_exit([]{enet_host_destroy(server);});
+	atexit([]{enet_host_destroy(server);});
 
 	std::cout << "Server started on port " << PORT << std::endl;
 
 	#ifdef _WIN32
 	timeBeginPeriod(1);
-	auto _cleanup_windows = std::experimental::scope_exit([]{timeEndPeriod(1);});
+	atexit([]{timeEndPeriod(1);});
 	#endif
 
 	ENetEvent event;
@@ -272,4 +272,8 @@ int main(int argc, char* argv[]) {
 	}
 
 	return 0;
+} catch (const std::exception& e) {
+	std::cout << "ERROR: " << e.what() << std::endl;
+	exit(1);
+}
 }
