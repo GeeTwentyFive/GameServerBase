@@ -52,12 +52,14 @@ enum PacketType : char {
 
 #pragma region PACKETS
 
+// Server <-> Clients
 #pragma pack(1)
 typedef struct {
 	PacketType packet_type = PacketType::PLAYER_CONNECTED;
 	enet_uint8 connected_player_id;
 } PlayerConnectedPacketData;
 
+// Server <-> Clients
 #pragma pack(1)
 typedef struct {
 	PacketType packet_type = PacketType::PLAYER_SYNC;
@@ -65,18 +67,21 @@ typedef struct {
 	PlayerState player_state;
 } PlayerSyncPacketData;
 
+// Client -> Server
 #pragma pack(1)
 typedef struct {
 	PacketType packet_type = PacketType::PLAYER_READY;
-	enet_uint8 player_id;
 } PlayerReadyPacketData;
 
+// Server <-> Clients
 #pragma pack(1)
 typedef struct {
 	PacketType packet_type = PacketType::PLAYER_DISCONNECTED;
 	enet_uint8 disconnected_player_id;
 } PlayerDisconnectedPacketData;
 
+
+// Server -> Clients control packets
 
 #pragma pack(1)
 typedef struct {
@@ -108,18 +113,6 @@ static inline void HandleReceive(
 	ENetPeer* peer,
 	ENetPacket* packet
 ) {
-	PacketType packet_type = *((PacketType*)(packet->data + 0));
-
-	if (
-		packet_type != PacketType::PLAYER_SYNC &&
-		packet_type != PacketType::PLAYER_READY
-		// ADD PACKET TYPES WHICH CAN BE RECEIVED FROM PLAYERS AND CONTAIN PLAYER ID HERE (for packet validity check via ID)
-		||
-		peer->incomingPeerID != *((enet_uint8*)(
-			packet->data + offsetof(PlayerSyncPacketData, player_id)
-		))
-	) return;
-
 	switch (*((PacketType*)(packet->data + 0))) {
 		case PacketType::PLAYER_SYNC:
 		{
