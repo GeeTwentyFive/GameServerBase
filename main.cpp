@@ -2,13 +2,14 @@
 #include <iostream>
 #include <string>
 #include <experimental/scope>
-#ifdef _WIN32
-#include <windows.h>
-#endif
 #include <thread>
 
 #define ENET_IMPLEMENTATION
 #include "libs/enet.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 
 #define PORT 55555
