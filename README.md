@@ -1,6 +1,10 @@
 A foundation for implementing your own game server via ENet
 
-The source code is filled with a bunch of uppercase comments like "`// ADD PLAYER STATE HERE`" suggesting a way to modify the source code
+Suggestion for making your own game server:
+- Define all player states which you wish to synchronize in the `PlayerState` struct
+- Define all data which you want to keep in the server regarding players in the `ServerPlayerData` struct
+- Define additional packet types in the `PacketTypes` enum, and add their associated packet structs below it
+- Handle receiving various packet types in `HandleReceive()`
 
 
 # Client-side protocol
