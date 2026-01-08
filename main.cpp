@@ -114,13 +114,13 @@ int main(int argc, char* argv[]) {
 	address.port = PORT;
 	server = enet_host_create(&address, MAX_PLAYERS, 1, 0, 0);
 	if (server == nullptr) throw std::runtime_error("Failed to create ENet server");
-	auto _cleanup1 = std::experimental::scope_exit([](){enet_host_destroy(server);});
+	auto _cleanup1 = std::experimental::scope_exit([]{enet_host_destroy(server);});
 
 	std::cout << "Server started on port " << PORT << std::endl;
 
 	#ifdef _WIN32
 	timeBeginPeriod(1);
-	auto _cleanup_windows = std::experimental::scope_exit([](){timeEndPeriod(1);});
+	auto _cleanup_windows = std::experimental::scope_exit([]{timeEndPeriod(1);});
 	#endif
 
 	ENetEvent event;
