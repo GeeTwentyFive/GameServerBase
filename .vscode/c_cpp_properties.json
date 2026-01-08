@@ -16,7 +16,8 @@
             "intelliSenseMode": "windows-gcc-x64",
             "compilerArgs": [
                 "-std=c++23"
-            ]
+            ],
+            "compilerPath": "g++"
         }
     ],
     "version": 4
