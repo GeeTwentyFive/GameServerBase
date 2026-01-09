@@ -38,7 +38,6 @@ typedef struct {
 
 
 enum PacketType : char {
-	PLAYER_CONNECTED,
 	PLAYER_SYNC,
 	PLAYER_READY,
 	PLAYER_DISCONNECTED,
@@ -51,13 +50,6 @@ enum PacketType : char {
 // DEFINE PACKETS AND PACKET TYPES AROUND HERE ^ v
 
 #pragma region PACKETS
-
-// Server <-> Clients
-#pragma pack(1)
-typedef struct {
-	PacketType packet_type = PacketType::PLAYER_CONNECTED;
-	enet_uint8 connected_player_id;
-} PlayerConnectedPacketData;
 
 // Server <-> Clients
 #pragma pack(1)
@@ -140,15 +132,6 @@ static inline void HandleReceive(
 				<< peer->incomingPeerID
 				<< " connected"
 				<< std::endl;
-
-				PlayerConnectedPacketData pcp_data;
-				pcp_data.connected_player_id = peer->incomingPeerID;
-				ENetPacket* player_connected_packet = enet_packet_create(
-					&pcp_data,
-					sizeof(PlayerConnectedPacketData),
-					ENET_PACKET_FLAG_RELIABLE
-				);
-				enet_host_broadcast(server, 0, player_connected_packet);
 			}
 
 			player_states[peer->incomingPeerID] = *((PlayerState*)(
