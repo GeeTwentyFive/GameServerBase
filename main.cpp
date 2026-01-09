@@ -130,7 +130,7 @@ static inline void HandleReceive(
 				std::cout
 				<< "Player "
 				<< peer->incomingPeerID
-				<< "connected"
+				<< " connected"
 				<< std::endl;
 
 				PlayerConnectedPacketData pcp_data;
@@ -147,6 +147,7 @@ static inline void HandleReceive(
 				packet->data + offsetof(PlayerSyncPacketData, player_state)
 			));
 
+			((PlayerSyncPacketData*)packet->data)->player_id = peer->incomingPeerID;
 			enet_host_broadcast(server, 0, packet);
 		}
 		break;
@@ -241,7 +242,7 @@ try {
 					std::cout
 					<< "Player "
 					<< event.peer->incomingPeerID
-					<< "disconnected"
+					<< " disconnected"
 					<< std::endl;
 
 					player_states.erase(event.peer->incomingPeerID);
@@ -253,6 +254,11 @@ try {
 						),
 						player_ids.end()
 					);
+
+					if (player_ids.size() == 0) {
+						std::cout << "All players left, shutting down server..." << std::endl;
+						exit(0);
+					}
 
 					PlayerDisconnectedPacketData pdp_data;
 					pdp_data.disconnected_player_id = event.peer->incomingPeerID;
