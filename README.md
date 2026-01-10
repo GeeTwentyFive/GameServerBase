@@ -17,7 +17,8 @@ Suggestion for making your own game server:
 3) Send a `PLAYER_READY` packet if you are ready to start the game
 
 4) Send a `PLAYER_SYNC` packet with your player state every frame/physics/network tick, and handle receiving the following packets:
-	- `PLAYER_SYNC` -> synchronize player's state
+	- `PLAYER_SYNC` -> synchronize remote player's state (create player if doesn't exist)
 	- `PLAYER_DISCONNECTED` -> remove player from local collection of players(/states)
 	- `CONTROL_GAME_START` -> set up game/world and/or spawn players and start game
+	- `CONTROL_SET_PLAYER_STATE` -> set your local client state to received state
 	- `CONTROL_GAME_END` -> end game
