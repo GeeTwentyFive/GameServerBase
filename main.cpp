@@ -157,6 +157,7 @@ static inline void HandleReceive(
 		{
 			if (game_started) break;
 			if (peer_to_player_id.find(peer) == peer_to_player_id.end()) break;
+			if (serverside_player_data[peer_to_player_id[peer]].ready) break;
 
 			const PlayerID player_id = peer_to_player_id[peer];
 
