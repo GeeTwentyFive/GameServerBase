@@ -1,9 +1,11 @@
+#include <limits>
 #include <vector>
 #include <unordered_map>
 #include <iostream>
 #include <string>
 #include <algorithm>
 #include <thread>
+#include <array>
 
 #define ENET_IMPLEMENTATION
 #include "libs/enet.h"
@@ -15,6 +17,18 @@
 
 #define PORT 55555
 #define MAX_PLAYERS 8
+
+
+typedef uint16_t PlayerID;
+
+PlayerID _player_GUID = 0;
+static inline const PlayerID NewPlayerGUID() {
+	if (_player_GUID == std::numeric_limits<PlayerID>::max()) throw std::runtime_error(
+		"Player GUID counter overflow"
+	);
+
+	return _player_GUID++;
+}
 
 
 #pragma pack(1)
@@ -38,38 +52,31 @@ typedef struct {
 
 
 enum PacketType : char {
-	PLAYER_SYNC,
-	PLAYER_READY,
-	PLAYER_DISCONNECTED,
+	PLAYER_SYNC, // Client -> Server -> *other* Clients
+	PLAYER_READY, // Client -> Server
+	PLAYER_DISCONNECTED, // Server -> Clients
 
-	// Server -> Client control packets
-	CONTROL_GAME_START,
-	CONTROL_GAME_END
+	// Server -> Client(s) control packets
+	CONTROL_GAME_START, // Server -> Clients
+	CONTROL_SET_PLAYER_STATE, // Server -> Client
+	CONTROL_GAME_END // Server -> Clients
 };
 
-// DEFINE PACKETS AND PACKET TYPES AROUND HERE ^ v
+// DEFINE PACKET TYPES AND ADDITIONAL PACKET DATA AROUND HERE ^ v
 
-#pragma region PACKETS
+#pragma region PACKETS_DATA
 
-// Server <-> Clients
 #pragma pack(1)
 typedef struct {
 	PacketType packet_type = PacketType::PLAYER_SYNC;
-	enet_uint8 player_id;
+	PlayerID player_id;
 	PlayerState player_state;
 } PlayerSyncPacketData;
 
-// Client -> Server
-#pragma pack(1)
-typedef struct {
-	PacketType packet_type = PacketType::PLAYER_READY;
-} PlayerReadyPacketData;
-
-// Server <-> Clients
 #pragma pack(1)
 typedef struct {
 	PacketType packet_type = PacketType::PLAYER_DISCONNECTED;
-	enet_uint8 disconnected_player_id;
+	PlayerID disconnected_player_id;
 } PlayerDisconnectedPacketData;
 
 
@@ -77,34 +84,20 @@ typedef struct {
 
 #pragma pack(1)
 typedef struct {
-	PacketType packet_type = PacketType::CONTROL_GAME_START;
-} ControlGameStartPacketData;
+	PacketType packet_type = PacketType::CONTROL_SET_PLAYER_STATE;
+	PlayerState state;
+} ControlSetPlayerStatePacketData;
 
-#pragma pack(1)
-typedef struct {
-	PacketType packet_type = PacketType::CONTROL_GAME_END;
-} ControlGameEndPacketData;
-
-#pragma endregion PACKETS
+#pragma endregion PACKETS_DATA
 
 
 ENetHost* server;
 
-std::vector<enet_uint8> player_ids = []{
-	std::vector<enet_uint8> v;
-	v.reserve(MAX_PLAYERS);
-	return v;
-}();
-std::unordered_map<enet_uint8, PlayerState> player_states = []{
-	std::unordered_map<enet_uint8, PlayerState> m;
-	m.reserve(MAX_PLAYERS);
-	return m;
-}();
-std::unordered_map<enet_uint8, ServerPlayerData> serverside_player_data = []{
-	std::unordered_map<enet_uint8, ServerPlayerData> m;
-	m.reserve(MAX_PLAYERS);
-	return m;
-}();
+std::unordered_map<ENetPeer*, PlayerID> peer_to_player_id(MAX_PLAYERS);
+std::unordered_map<PlayerID, ENetPeer*> player_id_to_peer(MAX_PLAYERS);
+
+std::unordered_map<PlayerID, PlayerState> player_states(MAX_PLAYERS);
+std::unordered_map<PlayerID, ServerPlayerData> serverside_player_data(MAX_PLAYERS);
 
 bool game_started = false;
 
@@ -113,66 +106,85 @@ static inline void HandleReceive(
 	ENetPeer* peer,
 	ENetPacket* packet
 ) {
+	if (packet->dataLength < sizeof(PacketType)) {enet_packet_destroy(packet); return;}
+
 	switch (*((PacketType*)(packet->data + 0))) {
+		default: break;
+
 		case PacketType::PLAYER_SYNC:
 		{
-			if (
-				std::find(
-					player_ids.begin(),
-					player_ids.end(),
-					peer->incomingPeerID
-				) == player_ids.end()
-			) {
-				player_ids.push_back(peer->incomingPeerID);
+			if (packet->dataLength < sizeof(PlayerSyncPacketData)) break;
 
-				serverside_player_data[peer->incomingPeerID] = ServerPlayerData{};
+			if (peer_to_player_id.find(peer) == peer_to_player_id.end()) {
+                                const PlayerID player_id = NewPlayerGUID();
 
-				std::cout
+                                peer_to_player_id[peer] = player_id;
+                                player_id_to_peer[player_id] = peer;
+
+                                serverside_player_data[player_id] = ServerPlayerData{};
+
+                                std::cout
 				<< "Player "
-				<< peer->incomingPeerID
+				<< player_id
 				<< " connected"
 				<< std::endl;
-			}
+                        }
 
-			player_states[peer->incomingPeerID] = *((PlayerState*)(
+			const PlayerID player_id = peer_to_player_id[peer];
+
+			player_states[player_id] = *((PlayerState*)(
 				packet->data + offsetof(PlayerSyncPacketData, player_state)
 			));
 
-			((PlayerSyncPacketData*)packet->data)->player_id = peer->incomingPeerID;
-			enet_host_broadcast(server, 0, packet);
+			((PlayerSyncPacketData*)packet->data)->player_id = player_id;
+                        // Retransmit sync packet to all other peers except the one who sent it
+                        for (auto const& [player_peer, _] : peer_to_player_id) {
+                                if (player_peer == peer) continue;
+                                enet_peer_send(
+                                        player_peer,
+                                        0,
+                                        enet_packet_create(
+                                                packet->data,
+                                                packet->dataLength,
+                                                0
+                                        )
+                                );
+                        }
 		}
 		break;
 
 		case PacketType::PLAYER_READY:
 		{
-			serverside_player_data[peer->incomingPeerID].ready = true;
+			if (game_started) break;
+			if (peer_to_player_id.find(peer) == peer_to_player_id.end()) break;
+
+			const PlayerID player_id = peer_to_player_id[peer];
+
+			serverside_player_data[player_id].ready = true;
 
 			int ready_players = 0;
 			for (auto const& [_, ss_player_data] : serverside_player_data) {
 				if (ss_player_data.ready) ready_players++;
 			}
-			if (ready_players != player_ids.size()) return;
+			if (ready_players != peer_to_player_id.size()) break;
 
 			// Everyone is ready; start game
 
 			game_started = true;
 
-			ControlGameStartPacketData cgsp_data;
 			ENetPacket* game_start_packet = enet_packet_create(
-				&cgsp_data,
-				sizeof(ControlGameStartPacketData),
+                                std::array<char, 1>{PacketType::CONTROL_GAME_START}.data(),
+				sizeof(PacketType),
 				ENET_PACKET_FLAG_RELIABLE
 			);
 			enet_host_broadcast(server, 0, game_start_packet);
-
-			enet_packet_destroy(packet);
 		}
 		break;
 
 		// HANDLE OTHER PACKET TYPES HERE
-
-		default: break;
 	}
+
+	enet_packet_destroy(packet);
 }
 
 
@@ -197,8 +209,12 @@ try {
 
 	ENetEvent event;
 	for (;;) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
 		while (enet_host_service(server, &event, 0) > 0) {
 			switch (event.type) {
+				default: break;
+
 				case ENET_EVENT_TYPE_CONNECT:
 				{
 					if (game_started) {
@@ -212,62 +228,52 @@ try {
 
 				case ENET_EVENT_TYPE_RECEIVE:
 				{
-					HandleReceive(
-						event.peer,
-						event.packet
-					);
+					HandleReceive(event.peer, event.packet);
 				}
 				break;
 
 				case ENET_EVENT_TYPE_DISCONNECT:
 				case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
 				{
-					if (
-						std::find(
-							player_ids.begin(),
-							player_ids.end(),
-							event.peer->incomingPeerID
-						) == player_ids.end()
-					) continue;
+					if (peer_to_player_id.find(event.peer) == peer_to_player_id.end()) continue;
 
-					std::cout
-					<< "Player "
-					<< event.peer->incomingPeerID
-					<< " disconnected"
-					<< std::endl;
+                                        const PlayerID player_id = peer_to_player_id[event.peer];
 
-					serverside_player_data.erase(event.peer->incomingPeerID);
-					player_states.erase(event.peer->incomingPeerID);
-					player_ids.erase(
-						std::remove(
-							player_ids.begin(),
-							player_ids.end(),
-							event.peer->incomingPeerID
-						),
-						player_ids.end()
-					);
+                                        if (game_started) {
+                                                std::cout
+                                                << "Player "
+                                                << player_id
+                                                << " disconnected during started game"
+                                                << ", shutting down..."
+                                                << std::endl;
 
-					if (player_ids.size() == 0) {
-						std::cout << "All players left, shutting down server..." << std::endl;
-						exit(0);
-					}
+                                                exit(0);
+                                        }
 
-					PlayerDisconnectedPacketData pdp_data;
-					pdp_data.disconnected_player_id = event.peer->incomingPeerID;
+                                        std::cout
+                                        << "Player "
+                                        << player_id
+                                        << " disconnected"
+                                        << std::endl;
+
+                                        player_states.erase(player_id);
+                                        serverside_player_data.erase(player_id);
+
+                                        player_id_to_peer.erase(player_id);
+                                        peer_to_player_id.erase(event.peer);
+
+                                        PlayerDisconnectedPacketData pdp_data{};
+					pdp_data.disconnected_player_id = player_id;
 					ENetPacket* player_disconnected_packet = enet_packet_create(
 						&pdp_data,
 						sizeof(PlayerDisconnectedPacketData),
 						ENET_PACKET_FLAG_RELIABLE
 					);
 					enet_host_broadcast(server, 0, player_disconnected_packet);
-				}
+                                }
 				break;
-
-				case ENET_EVENT_TYPE_NONE: break;
 			}
 		}
-
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 
 	return 0;
